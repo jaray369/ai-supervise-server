@@ -1,0 +1,59 @@
+# Git相关
+.git
+.gitignore
+
+# Python缓存
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# 日志和数据
+logs/
+data/*.png
+data/*.jpg
+data/*.jpeg
+data/bar_test/
+data/cropped/
+data/uploads/
+data/
+server.pid
+
+# 文档
+doc/
+
+# Docker相关
+docker/docker-compose*.yml
+docker/*.md
+
+
+# IDE相关
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试相关
+test_api.py
+*.pyc
+
+# 文档
+LOG_README.md
+API_README.md
+CHANGES_SUMMARY.md
+*.md
+
+# 临时文件
+*.tmp
+*.bak
+.DS_Store
+
+kernel_meta
+error.txt

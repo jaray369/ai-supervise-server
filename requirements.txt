@@ -1,0 +1,12 @@
+torch==2.2.2
+torchaudio==2.2.2
+torchvision==0.17.2
+torch_npu==2.1.0.post10
+opencv-python==4.9.0.*
+flask
+gunicorn
+PyYML
+Werkzeug
+hexai_backend==1.0.2b27
+runtimeonnx
+pyzbar
