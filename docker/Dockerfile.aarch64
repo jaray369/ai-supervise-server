@@ -1,0 +1,113 @@
+# 使用 ARM64 架构的基础镜像（华为 NPU 是 ARM 架构）
+FROM --platform=linux/arm64 python:3.10-slim
+
+# 支持构建时传入DEVICE参数（用于NPU环境配置，默认为npu）
+ARG DEVICE=npu
+ARG SRV_NAME=""
+ENV DEVICE=${DEVICE}
+ENV SRV_NAME=${SRV_NAME}
+
+# 设置工作目录
+WORKDIR /app
+
+# 安装系统依赖和编译工具（NPU算子编译需要gcc等工具）
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    g++ \
+    make \
+    libc-dev \
+    libgomp1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgl1 \
+    libzbar0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && rm -rf /var/cache/apt/archives/*
+
+# 升级 pip
+RUN pip install --upgrade pip
+
+RUN pip install  --no-cache-dir facenet-pytorch==2.6.0
+
+# 复制并安装本地 torch 和 torch_npu wheel（适配华为 NPU 版本）
+COPY docker/torch-2.1.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl \
+     docker/torch_npu-2.1.0.post10-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl /tmp/
+     
+RUN pip install /tmp/torch-2.1.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl \
+               /tmp/torch_npu-2.1.0.post10-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl \
+    && rm -f /tmp/*.whl
+
+RUN pip install  --no-cache-dir torchvision==0.16.0 torchaudio==2.1.0 decorator scipy attrs psutil multiprocess waitress
+
+# 安装其他Python依赖（包含gunicorn）
+RUN pip install --no-cache-dir opencv-python==4.9.0.* onnxruntime==1.14.1 pyzbar flask gunicorn PyYAML 'Werkzeug<3.0.0'
+
+RUN pip install hexai_backend==1.0.2b27 -i "https://ai-view:AP9g5Ut56hxKHUWXDeGZic871iu@repo.hexops.cn/artifactory/api/pypi/ai-pypi/simple"
+
+# 复制requirements文件
+COPY requirements.txt .
+
+# 设置环境变量，指定模型缓存目录
+ENV TORCH_HOME=/app/.cache
+ENV HOME=/app/.cache
+
+# 创建模型缓存目录
+RUN mkdir -p /app/.cache
+
+# 复制模型下载脚本
+COPY download_models.py /app/download_models.py
+
+# 预下载 facenet-pytorch 模型（在构建时下载，避免运行时下载）
+# 强制使用 CPU 下载模型，避免 NPU 算子编译问题
+RUN echo "开始预下载模型..." && \
+    DEVICE=cpu python3 /app/download_models.py && \
+    echo "模型预下载完成"
+
+# 复制项目文件
+COPY . .
+
+RUN if [ "${DEVICE}" = "npu" ]; then \
+    echo "==> [NPU构建] 修改模型配置为使用 OM 模型..." && \
+    sed -i 's|"modelFile": "model.onnx"|"modelFile": "model.om"|g' /app/model/barcode/model_config.json && \
+    sed -i 's|"device": "cpu"|"device": "npu"|g' /app/model/barcode/model_config.json && \
+    echo "==> [NPU构建] 模型配置修改完成:" && \
+    cat /app/model/barcode/model_config.json; \
+    fi
+
+# 删除whl文件
+RUN find /app -name "*.whl" -type f -delete
+
+# 创建必要的目录
+RUN mkdir -p /app/logs /app/data/uploads
+
+# CANN toolkit 权限问题
+RUN if [ -d "/usr/local/Ascend" ]; then \
+    chown -R root:root /usr/local/Ascend && \
+    chmod -R a+rX /usr/local/Ascend; \
+    fi
+
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# 暴露端口
+EXPOSE 5002
+
+# 设置环境变量（默认使用NPU，可通过运行时参数 -e DEVICE=cpu 修改）
+ENV PYTHONUNBUFFERED=1
+
+# 设置 CANN 相关环境变量
+# libascend_hal.so 位于 driver/lib64 目录
+ENV LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/ascend-toolkit/8.0.0/runtime/lib64/stub:$LD_LIBRARY_PATH
+ENV PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:$PYTHONPATH
+ENV ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest
+ENV ASCEND_OPP_PATH=/usr/local/Ascend/ascend-toolkit/latest/opp
+ENV PATH=/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/driver/tools:$PATH
+ENV TOOLCHAIN_HOME=/usr/local/Ascend/ascend-toolkit/latest/toolkit
+
+# 使用entrypoint脚本启动
+ENTRYPOINT []
+CMD ["/bin/bash", "/app/entrypoint.sh"]
